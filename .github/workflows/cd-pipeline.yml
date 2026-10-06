@@ -31,5 +31,5 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/render:latest
-            ghcr.io/${{ github.repository_owner }}/render:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/barcode-gen-render:latest
+            ghcr.io/${{ github.repository_owner }}/barcode-gen-render:${{ github.sha }}
