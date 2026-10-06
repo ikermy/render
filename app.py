@@ -37,15 +37,37 @@ class RenderRequest(BaseModel):
     renderKey: str | None = None
 
 
-def _put_object(object_key: str, content: bytes) -> None:
+def _minio_client():
     from minio import Minio
 
-    client = Minio(
+    return Minio(
         STORAGE_ENDPOINT,
         access_key=STORAGE_ACCESS_KEY,
         secret_key=STORAGE_SECRET_KEY,
         secure=STORAGE_USE_SSL,
     )
+
+
+def _public_url(object_key: str) -> str:
+    base = STORAGE_PUBLIC_URL or f"http://{STORAGE_ENDPOINT}"
+    return f"{base}/{STORAGE_BUCKET}/{object_key}"
+
+
+def _existing_url(object_key: str) -> str | None:
+    """Replay: если объект с таким renderKey уже есть — не запускаем encoder повторно."""
+    if STORAGE_ENDPOINT:
+        try:
+            _minio_client().stat_object(STORAGE_BUCKET, object_key)
+            return _public_url(object_key)
+        except Exception:
+            return None
+    if os.path.exists(os.path.join(OUTPUT_DIR, object_key)):
+        return f"{RENDER_PUBLIC_URL}/{object_key}"
+    return None
+
+
+def _put_object(object_key: str, content: bytes) -> None:
+    client = _minio_client()
     if not client.bucket_exists(STORAGE_BUCKET):
         client.make_bucket(STORAGE_BUCKET)
     client.put_object(
@@ -60,8 +82,7 @@ def _put_object(object_key: str, content: bytes) -> None:
 def _store(object_key: str, content: bytes) -> str:
     if STORAGE_ENDPOINT:
         _put_object(object_key, content)
-        base = STORAGE_PUBLIC_URL or f"http://{STORAGE_ENDPOINT}"
-        return f"{base}/{STORAGE_BUCKET}/{object_key}"
+        return _public_url(object_key)
 
     with open(os.path.join(OUTPUT_DIR, object_key), "wb") as fh:
         fh.write(content)
@@ -76,6 +97,13 @@ def healthz() -> dict[str, str]:
 @app.post("/render")
 def render(req: RenderRequest) -> dict[str, str]:
     render_key = req.renderKey or uuid.uuid4().hex
+    object_key = f"{render_key}.png"
+
+    # Replay по renderKey: повторный запрос возвращает готовый объект без render.
+    existing = _existing_url(object_key)
+    if existing is not None:
+        return {"key": object_key, "url": existing}
+
     fmt = req.format.lower()
 
     try:
@@ -88,7 +116,6 @@ def render(req: RenderRequest) -> dict[str, str]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    object_key = f"{render_key}.png"
     url = _store(object_key, content)
     return {"key": object_key, "url": url}
 
