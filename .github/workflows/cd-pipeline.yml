@@ -1,21 +1,17 @@
-name: CD
+name: CD Render
 
 on:
   push:
-    branches: [main, master, production]
-    tags: ['v*']
+    branches: [ master, main ]
   workflow_dispatch:
 
-env:
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/barcode-gen-render
-  DEPLOY_DIR: /barcode/render
+permissions:
+  contents: read
+  packages: write
 
 jobs:
   build-push:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v4
 
@@ -27,55 +23,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/build-push-action@v6
+      - name: Build & push Render
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: config/prod/Dockerfile
           platforms: linux/amd64
           push: true
           tags: |
-            ${{ env.IMAGE_NAME }}:prod
-            ${{ env.IMAGE_NAME }}:${{ github.sha }}
-
-  deploy:
-    needs: build-push
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Copy compose to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.HOST }}
-          username: ${{ secrets.USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: config/prod/docker-compose.yml
-          target: ${{ env.DEPLOY_DIR }}
-          strip_components: 2
-
-      - name: Deploy
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.HOST }}
-          username: ${{ secrets.USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            set -e
-            cd ${{ env.DEPLOY_DIR }}
-            docker network inspect barcode_shared >/dev/null 2>&1 || docker network create barcode_shared
-            : > .env
-            echo "PORT=8000" >> .env
-            echo "STORAGE_ENDPOINT=${{ secrets.STORAGE_ENDPOINT }}" >> .env
-            echo "STORAGE_BUCKET=${{ vars.STORAGE_BUCKET || 'barcodes' }}" >> .env
-            echo "STORAGE_ACCESS_KEY=${{ secrets.STORAGE_ACCESS_KEY }}" >> .env
-            echo "STORAGE_SECRET_KEY=${{ secrets.STORAGE_SECRET_KEY }}" >> .env
-            echo "STORAGE_USE_SSL=${{ vars.STORAGE_USE_SSL || 'false' }}" >> .env
-            echo "STORAGE_PUBLIC_URL=${{ secrets.STORAGE_PUBLIC_URL }}" >> .env
-            chmod 600 .env
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            docker rm -f barcode_render || true
-            docker compose -f docker-compose.yml pull render
-            docker compose -f docker-compose.yml up -d render
-            docker compose -f docker-compose.yml ps render
-            docker run --rm --network barcode_shared curlimages/curl:8.10.1 -fsS http://render:8000/healthz
-            docker image prune -f
+            ghcr.io/${{ github.repository_owner }}/render:latest
+            ghcr.io/${{ github.repository_owner }}/render:${{ github.sha }}
